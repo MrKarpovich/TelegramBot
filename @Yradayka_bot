@@ -1,0 +1,100 @@
+import telebot
+from telebot import types
+import random
+from config import GAME_API
+bot = telebot.TeleBot(GAME_API)
+
+# Словарь для соответствия уровней и диапазонов чисел
+levels = {
+    "Уровень 'Тест' (1-2)": (1, 2),
+    "Уровень 'Средняя интуиция' (1-10)": (1, 10),
+    "Уровень 'ОЧЕНЬ! Сильная интуиция!' (1-100)": (1, 100),
+    "Уровень 'GOD!' (1-1000)": (1, 1000)
+}
+
+# Счетчик очков игрока
+scores = {}
+
+# Счетчик неудачных попыток игрока
+failures = {}
+
+# Словарь для хранения уровня игрока
+user_levels = {}
+
+# Словарь для хранения количества попыток каждого игрока
+attempts = {}
+
+# Функция для начала игры
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    for level in levels:
+        markup.add(types.KeyboardButton(level))
+    bot.send_message(message.chat.id, "Привет! Давай сыграем в игру 'Угадай-ка!'", reply_markup=markup)
+
+# Функция для выбора уровня игры
+@bot.message_handler(func=lambda message: message.text in levels.keys())
+def choose_level(message):
+    bot.send_message(message.chat.id, "Отлично! Теперь давай загадаем число...", reply_markup=None)
+
+    level = message.text
+    user_levels[message.from_user.id] = level  # Сохраняем уровень пользователя
+    min_number, max_number = levels[level]
+    secret_number = random.randint(min_number, max_number)
+    bot.send_message(message.chat.id, "Загадал!")
+    bot.register_next_step_handler(message, lambda message: guess_number(message, secret_number))
+
+# Функция для угадывания числа
+def guess_number(message, secret_number):
+    try:
+        guessed_number = int(message.text)
+        user_id = message.from_user.id
+        attempts[user_id] = attempts.get(user_id, 0) + 1  # Увеличиваем счетчик попыток для текущего пользователя
+        if guessed_number == secret_number:
+            bot.send_message(message.chat.id, f"Поздравляю, вы угадали! Я загадал число: {secret_number}")
+            # Начисляем очко игроку
+            scores[user_id] = scores.get(user_id, 0) + 1
+            # Проверяем условие завершения игры
+            if scores[user_id] >= 3:
+                bot.send_message(message.chat.id, f"Поздравляю, вы прошли игру! Количество попыток: {attempts[user_id]}, Количество неудачных попыток: {failures[user_id]}")
+                scores[user_id] = 0  # Обнуляем счетчик очков для новой игры
+                failures[user_id] = 0  # Обнуляем счетчик неудачных попыток для новой игры
+                user_levels.pop(user_id)  # Удаляем уровень пользователя
+                attempts.pop(user_id)  # Удаляем счетчик попыток для текущего пользователя
+                failures.pop(user_id)  # Удаляем счетчик неудачных попыток для текущего пользователя
+                send_stop_button(message.chat.id)  # Отправляем кнопку /stop после завершения игры
+            else:
+                bot.send_message(message.chat.id, "Давайте сыграем еще раз...")
+                level = user_levels.get(user_id)
+                min_number, max_number = levels[level]
+                secret_number = random.randint(min_number, max_number)  # Генерируем новое случайное число
+                bot.send_message(message.chat.id, "Загадал!")  # Просим угадать новое число
+                bot.register_next_step_handler(message, lambda message: guess_number(message, secret_number))  # Регистрируем новый обработчик для угадывания нового числа
+        else:
+            bot.send_message(message.chat.id, f"Мимо! Я загадал число: {secret_number}")
+            failures[user_id] = failures.get(user_id, 0) + 1  # Увеличиваем счетчик неудачных попыток для текущего пользователя
+            level = user_levels.get(user_id)
+            min_number, max_number = levels[level]
+            secret_number = random.randint(min_number, max_number)  # Генерируем новое случайное число
+            bot.send_message(message.chat.id, "Загадал!")  # Просим угадать новое число
+            bot.register_next_step_handler(message, lambda message: guess_number(message, secret_number))  # Регистрируем новый обработчик для угадывания нового числа
+    except ValueError:
+        bot.send_message(message.chat.id, "Ещё раз /stop пока не пропадут кнопки")
+
+# Функция для отправки кнопки /stop
+def send_stop_button(chat_id):
+    markup = types.ReplyKeyboardRemove()
+    bot.send_message(chat_id, "Игра остановлена. Введите команду /start для начала новой игры.", reply_markup=markup)
+
+# Обработчик команды /stop
+@bot.message_handler(commands=['stop'])
+def stop_game(message):
+    send_stop_button(message.chat.id)
+
+import time
+while True:
+    try:
+        bot.polling(none_stop=True, timeout=60)
+    except Exception as e:
+        print(f"Бот крашнул с ошибкой: {e}")
+        time.sleep(5)  # Подождать 10 секунд перед повторным запуском
